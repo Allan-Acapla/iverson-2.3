@@ -1,0 +1,119 @@
+# Content Repurposing Platform — Master Spec
+**Version:** 1.0  
+**Status:** Architecture Complete / Build Ready  
+**Last Updated:** 2026-02-20
+
+---
+
+## What This Is
+
+A custom web application that ingests long-form video (YouTube/podcast) and RSS/news content, runs it through an AI-powered processing pipeline, and produces reviewable, approvable, publishable content outputs — clips, articles, tweets, and IG images.
+
+This document is the single source of truth for architecture, data model, workflow logic, and build order. Feed this file into Antigravity before starting any session.
+
+---
+
+## Core Principles
+
+1. **Human-first decisioning** — AI generates options, humans choose what moves forward
+2. **Observable pipeline** — every record has a visible status; nothing is a black box
+3. **Clean client UX** — clients see a simple approval portal, not system internals
+4. **Modular services** — video processing, AI generation, and publishing are separate services called by a central orchestrator
+5. **Practical build path** — ship working software fast; migrate infrastructure incrementally
+
+---
+
+## Two Content Funnels
+
+### Funnel A — Video
+YouTube/podcast → download → transcribe → AI clip identification → multi-cut blueprint generation → preview MP4s → human selection → editor workflow → copy generation → publish
+
+### Funnel B — RSS/News
+RSS feed → article extraction → AI outline → AI draft → human review → IG image render → tweet → publish to WordPress + social
+
+These funnels are separate but share the same database, UI shell, and publishing infrastructure.
+
+---
+
+## Tech Stack
+
+| Layer | Tool | Reason |
+|-------|------|---------|
+| Frontend + API routes | Next.js (App Router) | Fast to build, Vercel-native, works with Antigravity |
+| Hosting | Vercel | Git-connected, instant deploys |
+| Database | Supabase (Postgres) | Free at this scale, real relational DB, great Next.js integration |
+| Auth | Clerk | Role-based auth in Next.js with minimal setup |
+| Automation orchestrator | n8n (self-hosted, DigitalOcean) | Visual builder, webhook support, replaces Make.com for new workflows |
+| Video processing | NCA Toolkit (DigitalOcean app) | Already deployed, handles download/transcribe/cut/merge/caption |
+| AI generation | Claude API (Anthropic) | Clip identification, Visual Maps, article writing, tweet/caption drafts |
+| IG image rendering | Placid API | Stays as-is, does one job well |
+| Blog publishing | WordPress REST API | Stays as-is |
+| Notifications | Slack API (via n8n) | Stays as-is |
+| Version control | GitHub | Connected to Vercel for auto-deploy |
+
+---
+
+## Roles
+
+| Role | Access |
+|------|--------|
+| Producer | Full app — Command Center, Video Workshop, Article Workshop, all controls |
+| Editor | Clip editing queue — their assigned clips only |
+| Client | Client Portal only — approve/reject/comment on clips and articles |
+| Admin | Everything + framework editor + user management |
+
+---
+
+## Key External Services and How They Connect
+
+### NCA Toolkit
+- **What it is:** Self-hosted Python/Flask API on DigitalOcean
+- **How it's called:** HTTP POST from n8n workflows (not MCP)
+- **Key endpoints used:**
+  - `POST /v1/media/transcribe` — generate transcript + SRT from video URL
+  - `POST /v1/video/cut` — cut a segment by timestamps
+  - `POST /v1/video/concatenate` — merge multiple cut segments into one MP4
+  - `POST /v1/media/download` (beta) — download from YouTube via yt-dlp
+- **Async pattern:** All long-running jobs use `webhook_url` parameter — NCA Toolkit calls back to n8n when done; n8n updates Supabase
+
+### Claude API
+- **What it is:** Anthropic's AI API
+- **How it's called:** HTTP POST from n8n nodes (using `claude-sonnet-4-6` model)
+- **Used for:** Clip identification, Visual Map generation, article outline, article draft, tweet drafts, caption drafts
+
+### Supabase
+- **What it is:** Postgres database + REST API + auth helper
+- **Connected via MCP in Antigravity** for schema generation and migrations
+- **Also called directly** from Next.js API routes via `@supabase/supabase-js`
+
+---
+
+## MCP Connections for Antigravity
+
+Connect these before starting build sessions:
+1. **Supabase MCP** — for schema generation, migrations, and DB queries
+2. **Vercel MCP** — for deployment and environment variable management  
+3. **GitHub MCP** — for commits and version control
+4. **n8n-mcp (czlonkowski)** — gives Antigravity deep knowledge of all 1,084 n8n nodes so it builds accurate, production-ready workflows. This is a node documentation MCP, not a connection to your running n8n instance. It teaches the AI HOW to write n8n workflows correctly.
+
+### n8n-mcp Setup (add to Antigravity MCP config)
+```json
+{
+  "mcpServers": {
+    "n8n-mcp": {
+      "command": "npx",
+      "args": ["n8n-mcp"],
+      "env": {
+        "MCP_MODE": "stdio",
+        "LOG_LEVEL": "error",
+        "DISABLE_CONSOLE_OUTPUT": "true",
+        "N8N_API_URL": "https://your-n8n-instance.com",
+        "N8N_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+N8N_API_URL and N8N_API_KEY are optional — the MCP works without them for workflow building. Only needed if you want Antigravity to push workflows directly to your n8n instance.
+
+NCA Toolkit, Claude API, Slack, WordPress, and Placid are all standard REST — no MCP needed, just environment variables.
